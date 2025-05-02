@@ -62,7 +62,7 @@ void setupPPMTimer()
     };
     ESP_ERROR_CHECK(gptimer_register_event_callbacks(gptimer, &cbs, NULL));
 
-    gptimer_alarm_config_t alarm_config ={1000, 0, false}; //taget count; reload count; disable autoreload
+    gptimer_alarm_config_t alarm_config ={1000, 0, false}; //target count; reload count; disable autoreload
     ESP_ERROR_CHECK(gptimer_set_alarm_action(gptimer, &alarm_config));
     ESP_ERROR_CHECK(gptimer_enable(gptimer));
     ESP_ERROR_CHECK(gptimer_start(gptimer));
@@ -78,13 +78,13 @@ void generateTest()
 {
 
  if (pulseState)   {
-    usb_serial_jtag_write_bytes("-", 1, 20 / portTICK_PERIOD_MS);
+    //usb_serial_jtag_write_bytes("-", 1, 20 / portTICK_PERIOD_MS);
     gpio_set_level(PPM_PIN, 1);
     alarmValue = 50000;
     pulseState = false; // следующий запуск - спад
   }  
   else{
-    usb_serial_jtag_write_bytes("+", 1, 20 / portTICK_PERIOD_MS);
+    //usb_serial_jtag_write_bytes("+", 1, 20 / portTICK_PERIOD_MS);
     gpio_set_level(PPM_PIN, 0);
     alarmValue = 50000;
     pulseState = true; // следующий запуск - спад
@@ -101,49 +101,29 @@ void generateTest()
 
 void generatePPMLogic()
 {
-  uint16_t* channels;
-  if (pulseState)
-  {
-     gpio_set_level(PPM_PIN, 1);
-    // высокий уровень на значение канала минус время разделения импульсов
-    channels = getChannels();
-    alarmValue = channels[channelIndex] - PPM_PULSE_WIDTH;
-    summChannelWidth += channels[channelIndex]; 
-    channelIndex++;
-    pulseState = false; // следующий запуск - спад
-  }
-  else
-  {
-	//передали все каналы
-    if (channelIndex >= 8)
-    {
-	    // спад последнего канала
-      if (!end)
-      {
-        gpio_set_level(PPM_PIN, 0);
-        alarmValue = PPM_PULSE_WIDTH;
-        end = true;
-      }
-	    // пакет строго 22500мкс. в конце делаем синхроимпульс.
-      else
-      {
-        channelIndex = 0;
-        alarmValue = PPM_FRAME - (summChannelWidth + PPM_PULSE_WIDTH);
-        summChannelWidth = 0;
-        end = false;
-        fs_counter++;
-        if( fs_counter>50 ) {
-          resetChannelData();
-          fs_counter=0;
-        }
-      }
-    }
-    else
-    {
-	    // рисуем спад в конце каждого канала
+  uint16_t* channels; // = getChannels();
+
+  if (pulseState) {
+    // Высокий уровень (начало импульса)
+    gpio_set_level(PPM_PIN, 1);
+    alarmValue = PPM_PULSE_WIDTH;
+    pulseState = false;
+  } else {
+      // Низкий уровень (пауза между каналами)
       gpio_set_level(PPM_PIN, 0);
-      alarmValue = PPM_PULSE_WIDTH;
-      pulseState = true; // следующй запуск - высокий уровень
-    }
+
+      if (channelIndex >= 8) {
+          // Синхроимпульс (конец кадра)
+          alarmValue = PPM_FRAME - (summChannelWidth + 8 * PPM_PULSE_WIDTH);
+          channelIndex = 0;
+          summChannelWidth = 0;
+      } else {
+          // Пауза = длительность канала - PPM_PULSE_WIDTH
+          channels = getChannels();
+          alarmValue = channels[channelIndex] - PPM_PULSE_WIDTH;
+          summChannelWidth += channels[channelIndex];
+          channelIndex++;
+      }
+      pulseState = true;
   }
 }

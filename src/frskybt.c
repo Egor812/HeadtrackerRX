@@ -20,7 +20,6 @@ uint16_t channeldata[BT_CHANNELS] = {1500,1500,1500,1500,1500,1500,1500,1500};
 volatile uint8_t fs_counter = 0; // счетчик для фэйлсэйва по дисконнекту
 
 
-
 void resetChannelData(void)
 {
   for(int b=0; b<8; b++) channeldata[b] = 1500;
