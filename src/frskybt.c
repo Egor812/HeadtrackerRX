@@ -22,8 +22,6 @@ SemaphoreHandle_t channels_mutex = NULL;
 //uint16_t channeldata_ema[BT_CHANNELS] = {1500,1500,1500,1500,1500,1500,1500,1500};
 //float alpha = 0.1; // Коэффициент сглаживания (чем меньше, тем сильнее сглаживание)
 
-volatile uint8_t fs_counter = 0; // счетчик для фэйлсэйва по дисконнекту
-
 
 void createChannelsDataMutex(void)
 {
@@ -152,7 +150,6 @@ void processTrainerFrame(const uint8_t *otxbuffer)
     //}
 
 
-  fs_counter = 0;
 
   if (settings.role == ROLE_BLE_PERIPHERAL) {
     rsndbuf[rsndbufindex++] = 0x7e;
