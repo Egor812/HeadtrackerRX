@@ -1,132 +1,111 @@
-#include "ppm.h"
-#include "defines.h"
-#include "driver/gptimer.h"
-#include "driver/gpio.h"
-#include "frskybt.h"
-#include <stdbool.h>
-#include "esp_log.h"
-#include "bt_client.h"
-
-
-uint64_t tickCount; // счетчик таймера
-volatile uint16_t alarmValue; // текущая установка таймера
-
-volatile uint8_t channelIndex = 0; //номер передаваемого канала
-volatile static uint16_t summChannelWidth = 0; //считаем суммарную длину по всем каналам
-volatile static bool end = false; // передали 8 каналов
-volatile bool pulseState = false;
-
-//uint32_t last_receive = 0;
-
-
-void setupPPMTimer();
-bool IRAM_ATTR generatePPM(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *param);
-void IRAM_ATTR generatePPMLogic();
-void generateTest();
-void IRAM_ATTR setMyAlarm(gptimer_handle_t timer);
-
-void runPPM(void)
-{
-  gpio_set_direction(PPM_PIN, GPIO_MODE_DEF_OUTPUT);
-  gpio_set_level(PPM_PIN, 0);
-  setupPPMTimer();
-}
-
-
-
-void setMyAlarm(gptimer_handle_t timer)
-{
-  gptimer_get_raw_count(timer, &tickCount);
-  gptimer_set_raw_count(timer, 0); // сбрасываем счетчик
-  gptimer_alarm_config_t alarm_config = {
-    .alarm_count = alarmValue, 
-  };
-  gptimer_set_alarm_action(timer, &alarm_config); // запускаем будильник
-  //usb_serial_jtag_write_bytes("*", 1, 20 / portTICK_PERIOD_MS);
-}
-
-void setupPPMTimer()
-{
-   gptimer_handle_t gptimer = NULL;
-    const gptimer_config_t timer_config = {
-      .clk_src = GPTIMER_CLK_SRC_DEFAULT,
-      .direction = GPTIMER_COUNT_UP,
-      .resolution_hz = 1000000, // 1MHz
-     //.intr_priority = 0,
-      .flags = 0
-      };
-    ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &gptimer));
-
-    gptimer_event_callbacks_t cbs = {
-      .on_alarm = generatePPM,
-    };
-    ESP_ERROR_CHECK(gptimer_register_event_callbacks(gptimer, &cbs, NULL));
-
-    gptimer_alarm_config_t alarm_config ={1000, 0, false}; //target count; reload count; disable autoreload
-    ESP_ERROR_CHECK(gptimer_set_alarm_action(gptimer, &alarm_config));
-    ESP_ERROR_CHECK(gptimer_enable(gptimer));
-    ESP_ERROR_CHECK(gptimer_start(gptimer));
-}
-
-bool generatePPM(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *param) {
-  generatePPMLogic();
-  setMyAlarm( timer );
-  return 1;
-}
-
-void generateTest()
-{
-
- if (pulseState)   {
-    //usb_serial_jtag_write_bytes("-", 1, 20 / portTICK_PERIOD_MS);
-    gpio_set_level(PPM_PIN, 1);
-    alarmValue = 50000;
-    pulseState = false; // следующий запуск - спад
-  }  
-  else{
-    //usb_serial_jtag_write_bytes("+", 1, 20 / portTICK_PERIOD_MS);
-    gpio_set_level(PPM_PIN, 0);
-    alarmValue = 50000;
-    pulseState = true; // следующий запуск - спад
-  }
-}
-
-//функция обработчик прерывания
-//
 // PPM:
-//   _      _           _______
-// _| |____| |__| .....|       |_
+//   _      _          
+// _| |____| |__| .....
 //  |<-1-> |<-2->  ...        sync            
 // значение канала - время между фронтами импульсов
 // Высокий уровень (логическая 1) – короткий импульс (PPM_PULSE_WIDTH, обычно 300–500 мкс).
 // Низкий уровень (логический 0) – пауза, определяющая длительность канала (например, 1000–2000 мкс).
+// В конце низкий уровень, чтобы длина пакет стала 22500мкс
+
+#include "ppm.h"
+#include "defines.h"
+//#include "driver/gptimer.h"
+#include "driver/gpio.h"
+#include "frskybt.h"
+#include <stdbool.h>
+#include "esp_log.h"
+//#include "bt_client.h"
+#include <esp_timer.h>
+#include "driver/rmt_tx.h"
+
+uint16_t* channels;
+
+//rmt
+rmt_channel_handle_t tx_chan = NULL;
+rmt_encoder_handle_t ppm_encoder = NULL;
+bool rmt_on_duty = false;
+int64_t last_frame_time = 0;
 
 
-void generatePPMLogic()
-{
-  uint16_t* channels; // = getChannels();
+// Колбэк для события завершения передачи
+static bool on_rmt_transmit_done(rmt_channel_handle_t chan, const rmt_tx_done_event_data_t *edata, void *user_data) {
+    rmt_on_duty = false;
+    return false; // Не требуется повторный вызов
+}
 
-  if (pulseState) {
-    // Высокий уровень (начало импульса)
-    gpio_set_level(PPM_PIN, 1);
-    alarmValue = PPM_PULSE_WIDTH;
-    pulseState = false;
-  } else {
-      // Низкий уровень (пауза между каналами)
-      gpio_set_level(PPM_PIN, 0);
+void setupRMTChannel() {
+    rmt_tx_channel_config_t tx_chan_cfg = {
+        .gpio_num = PPM_PIN,
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 1000000,  // 1 МГц = 1 мкс/такт
+        .mem_block_symbols = 64,
+        .trans_queue_depth = 4
+    };
+    ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_cfg, &tx_chan));
 
-      if (channelIndex >= 8) {
-          // Синхроимпульс (конец кадра)
-          alarmValue = PPM_FRAME - (summChannelWidth + 8 * PPM_PULSE_WIDTH);
-          channelIndex = 0;
-          summChannelWidth = 0;
-      } else {
-          // Пауза = длительность канала - PPM_PULSE_WIDTH
-          channels = getChannels();
-          alarmValue = channels[channelIndex] - PPM_PULSE_WIDTH;
-          summChannelWidth += channels[channelIndex];
-          channelIndex++;
-      }
-      pulseState = true;
-  }
+    rmt_tx_event_callbacks_t cbs = {
+        .on_trans_done = on_rmt_transmit_done, // Указываем колбэк
+    };
+    ESP_ERROR_CHECK(rmt_tx_register_event_callbacks(tx_chan, &cbs, NULL));
+
+    // Включение канала
+    ESP_ERROR_CHECK(rmt_enable(tx_chan));
+}
+
+
+//--------------------------------------------------
+// Настройка энкодера (без энкодера)
+//--------------------------------------------------
+void setupRMTEncoder() {
+    rmt_copy_encoder_config_t copy_encoder_cfg = {};
+    ESP_ERROR_CHECK(rmt_new_copy_encoder(&copy_encoder_cfg, &ppm_encoder));
+}
+
+void generatePPM() {
+    rmt_on_duty = true;
+    last_frame_time = esp_timer_get_time();
+    //ESP_LOGI("PPM", "at %lld us [%04d]", esp_timer_get_time(),channels[0]);
+    rmt_symbol_word_t symbols[PPM_CHANNELS] = {0};
+    uint32_t total_time = 0;
+
+    // Заполнение импульсов и пауз
+    for (int i = 0; i < PPM_CHANNELS; i++) {
+        // Импульс (высокий уровень)
+        symbols[i].level0 = 1;
+        symbols[i].duration0 = PPM_PULSE_WIDTH;
+        // Пауза (низкий уровень)
+        symbols[i].level1 = 0;
+        symbols[i].duration1 = channels[i] - PPM_PULSE_WIDTH;
+        //symbols[i].duration1 = 1000 - PPM_PULSE_WIDTH;
+        total_time += channels[i]+PPM_PULSE_WIDTH;
+        //total_time += 1500;
+    }
+
+    // Синхроимпульс (конец кадра)
+    symbols[PPM_CHANNELS-1].duration1 += PPM_FRAME - total_time;
+
+    // Отправка данных
+    rmt_transmit_config_t tx_cfg = {
+        .loop_count = 0, // Без зацикливания
+    };
+    ESP_ERROR_CHECK(rmt_transmit(tx_chan, ppm_encoder, symbols, sizeof(symbols), &tx_cfg));
+}
+
+
+//---------------------------------------------------------------------
+// Задача PPM (высокий приоритет)
+//---------------------------------------------------------------------
+void ppmTask(void *pvParameters) {
+    gpio_set_direction(PPM_PIN, GPIO_MODE_DEF_OUTPUT);
+    gpio_set_level(PPM_PIN, 0);
+    setupRMTChannel();
+    setupRMTEncoder();
+    while (1) {
+        channels = getChannels();
+        generatePPM();
+        while ( !rmt_on_duty && (esp_timer_get_time() - last_frame_time >= PPM_FRAME) ) {
+            taskYIELD();  // Даём время другим задачам
+        }
+    }
+
 }

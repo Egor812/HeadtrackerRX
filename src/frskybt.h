@@ -22,5 +22,6 @@ void processFrame(const uint8_t *frame, uint8_t len);
 void logBTFrame(bool valid, char message[]);
 uint16_t* getChannels();
 void resetChannelData(void);
+void createChannelsDataMutex(void);
 
 extern volatile uint8_t fs_counter;

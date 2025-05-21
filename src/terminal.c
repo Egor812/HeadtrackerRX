@@ -315,7 +315,6 @@ void setRole(role_t role)
       bt_init();
       btcInit();
       setBtCentralState ( CENTRAL_STATE_SCAN_START );
-      runPPM();
       break;
     case ROLE_BLE_PERIPHERAL:
       btPeripherialState = PERIPHERIAL_STATE_DISCONNECTED;

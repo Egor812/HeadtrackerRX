@@ -17,10 +17,21 @@
 #define BLUETOOTH_PACKET_SIZE 14
 
 uint16_t channeldata[BT_CHANNELS] = {1500,1500,1500,1500,1500,1500,1500,1500};
-uint16_t channeldata_ema[BT_CHANNELS] = {1500,1500,1500,1500,1500,1500,1500,1500};
-volatile uint8_t fs_counter = 0; // счетчик для фэйлсэйва по дисконнекту
-float alpha = 0.1; // Коэффициент сглаживания (чем меньше, тем сильнее сглаживание)
+SemaphoreHandle_t channels_mutex = NULL;
 
+//uint16_t channeldata_ema[BT_CHANNELS] = {1500,1500,1500,1500,1500,1500,1500,1500};
+//float alpha = 0.1; // Коэффициент сглаживания (чем меньше, тем сильнее сглаживание)
+
+volatile uint8_t fs_counter = 0; // счетчик для фэйлсэйва по дисконнекту
+
+
+void createChannelsDataMutex(void)
+{
+  channels_mutex = xSemaphoreCreateMutex();
+  if (channels_mutex == NULL) {
+    ESP_LOGE("Channels", "Failed to create mutex");
+  }
+}
 
 void resetChannelData(void)
 {
@@ -45,7 +56,16 @@ void logBTFrame(bool valid, char message[])
 
 uint16_t* getChannels()
 {
-  return channeldata_ema;
+    static uint16_t channels_copy[BT_CHANNELS];
+    
+    if (xSemaphoreTake(channels_mutex, pdMS_TO_TICKS(100))) {
+        memcpy(channels_copy, channeldata, sizeof(channels_copy));
+        xSemaphoreGive(channels_mutex);
+    } else {
+        ESP_LOGE("Channels", "Failed to take mutex");
+    }
+    return channels_copy;
+    //return channeldata; //старый добрый незащищенный вариант
 }
 
 static uint8_t buffer[BLUETOOTH_LINE_LENGTH + 1];
@@ -127,9 +147,9 @@ void processTrainerFrame(const uint8_t *otxbuffer)
   }
 
     //EMA Экспоненциальное скользящее среднее
-    for (uint8_t channel = 0; channel < 3; channel++) {
-    channeldata_ema[channel] = alpha * channeldata[channel] + (1 - alpha) * channeldata_ema[channel];    
-  }
+    //for (uint8_t channel = 0; channel < 3; channel++) {
+    //channeldata_ema[channel] = alpha * channeldata[channel] + (1 - alpha) * channeldata_ema[channel];    
+    //}
 
 
   fs_counter = 0;

@@ -366,9 +366,9 @@ static void gattc_profile_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_
         printf("\n");*/
        //ESP_LOGI(GATTC_TAG, "p_data->notify.value = %d %d %d", channeldata[0], channeldata[1], channeldata[2]);    
 
-
-        uart_write_bytes(uart_num, (void *)p_data->notify.value,
-                         p_data->notify.value_len);  // Write the received data to the UART port
+        #ifdef UART_OUTPUT
+          uart_write_bytes(uart_num, (void *)p_data->notify.value, p_data->notify.value_len);  // Write the received data to the UART port
+        #endif        
 
         // if(p_data->notify.handle == bt_datahandle) // If notify coming from the
         // data handle, send it to the UART port

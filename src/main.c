@@ -16,8 +16,9 @@
  *
  ****************************************************************************/
 
- #include "bt.h"
+#include "bt.h"
 #include "ppm.h"
+#include "frskybt.h"
 #include "defines.h"
 #include "driver/adc.h"
 #include "driver/gpio.h"
@@ -48,8 +49,13 @@ void runBlinky()
 
 void app_main(void)
 {
+  createChannelsDataMutex();
+
+  TaskHandle_t ppmTaskHandle = NULL; // Хэндл задачи PPM    
+  xTaskCreate(ppmTask, "PPM_Task", 4096, NULL, configMAX_PRIORITIES - 1, &ppmTaskHandle); // Высокий приоритет
+
   TaskHandle_t tUartHnd = NULL;
-  xTaskCreate(runUARTHead, "UART", 8192, NULL, tskIDLE_PRIORITY + 2, &tUartHnd);
+  xTaskCreate(runUARTHead, "UART", 8192, NULL, configMAX_PRIORITIES - 2, &tUartHnd);
   configASSERT(tUartHnd);
 
 #if defined(LEDPIN)

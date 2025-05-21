@@ -40,7 +40,7 @@
 #define BAUD_DEFAULT 115200
 #define BAUD_MAXIMUM 921600
 
-
+//#define UART_OUTPUT // выводить полученные по BT данные в UART
 
 // Optional Debugging Options
 #define DEBUG_TIMERS
